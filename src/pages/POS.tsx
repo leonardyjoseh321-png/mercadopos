@@ -7,9 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Search, ShoppingCart, Pause, Play, Trash2, Plus, Minus, Eye, DollarSign, X } from 'lucide-react';
 import { productsDB, categoriesDB, customersDB, salesDB, currenciesDB, settingsDB } from '@/lib/db';
-import { formatCurrency, convertToUsd, getMethodLabel } from '@/lib/currency';
+import { formatCurrency, convertToUsd, formatAmount } from '@/lib/currency';
 import { printReceipt } from '@/lib/print';
-import type { Product, Category, Customer, CartItem, Sale, Currency, PaymentEntry, SettingEntry } from '@/types';
+import type { Product, Category, Customer, CartItem, Sale, Currency, PaymentEntry, PaymentMethod } from '@/types';
 
 export default function POS() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -30,16 +30,22 @@ export default function POS() {
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const scannerRef = useRef<HTMLInputElement>(null);
-  const cedulaRef = useRef<HTMLInputElement>(null);
 
   // Payment state
   const [payments, setPayments] = useState<PaymentEntry[]>([]);
-  const [payMethod, setPayMethod] = useState('cash_usd');
+  const [payMethodId, setPayMethodId] = useState('');
   const [payAmount, setPayAmount] = useState('');
   const [changeCurrency, setChangeCurrency] = useState('usd');
+  const [totalDisplayCurrency, setTotalDisplayCurrency] = useState('');
 
   const displayCurrency = currencies.find(c => c.isBase) || currencies[0];
-  const taxRate = (settings.taxRate as number) || 16;
+  const defaultTaxRate = (settings.taxRate as number) || 16;
+  const defaultTaxName = (settings.taxName as string) || 'IVA';
+
+  // All payment methods flattened
+  const allPaymentMethods = currencies.flatMap(c =>
+    (c.paymentMethods || []).map(m => ({ ...m, currency: c }))
+  );
 
   useEffect(() => {
     loadData();
@@ -67,6 +73,12 @@ export default function POS() {
     return `$ ${usd.toFixed(2)}`;
   }, [displayCurrency]);
 
+  const formatInCurrency = (usd: number, currId: string) => {
+    const c = currencies.find(cu => cu.id === currId);
+    if (c) return formatCurrency(usd, c);
+    return formatPrice(usd);
+  };
+
   const filteredProducts = products.filter(p => {
     const matchSearch = !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.barcode.includes(searchQuery);
     const matchCat = selectedCategory === 'all' || p.categoryId === selectedCategory;
@@ -77,7 +89,6 @@ export default function POS() {
     if (e.key !== 'Enter') return;
     const barcode = searchQuery.trim();
     if (!barcode) return;
-
     const product = await productsDB.getByBarcode(barcode);
     if (product) {
       if (priceCheckMode) {
@@ -112,8 +123,16 @@ export default function POS() {
     setCart(prev => prev.filter(i => i.product.id !== productId));
   };
 
+  // Per-product tax calculation
+  const getItemTax = (item: CartItem) => {
+    const p = item.product;
+    const rate = p.hasCustomTax ? (p.customTaxRate || 0) : defaultTaxRate;
+    const lineTotal = p.salePrice * item.quantity;
+    return { rate, taxAmount: lineTotal * (rate / 100), lineTotal };
+  };
+
   const subtotal = cart.reduce((sum, i) => sum + i.product.salePrice * i.quantity, 0);
-  const taxAmount = subtotal * (taxRate / 100);
+  const taxAmount = cart.reduce((sum, i) => sum + getItemTax(i).taxAmount, 0);
   const total = subtotal + taxAmount;
 
   const handleCedulaSearch = async (e: React.KeyboardEvent) => {
@@ -141,6 +160,21 @@ export default function POS() {
     setNewCustomerPhone('');
   };
 
+  const buildSaleItems = () => cart.map(i => {
+    const { rate, taxAmount: itemTax } = getItemTax(i);
+    return {
+      productId: i.product.id,
+      productName: i.product.name,
+      barcode: i.product.barcode,
+      quantity: i.quantity,
+      priceUsd: i.product.salePrice,
+      totalUsd: i.product.salePrice * i.quantity,
+      taxRate: rate,
+      taxAmount: itemTax,
+      unit: i.product.unit || 'unidad' as const,
+    };
+  });
+
   const parkSale = async () => {
     if (!customer || cart.length === 0) return;
     const sale: Sale = {
@@ -148,14 +182,7 @@ export default function POS() {
       customerId: customer.id,
       customerName: customer.name,
       customerCedula: customer.cedula,
-      items: cart.map(i => ({
-        productId: i.product.id,
-        productName: i.product.name,
-        barcode: i.product.barcode,
-        quantity: i.quantity,
-        priceUsd: i.product.salePrice,
-        totalUsd: i.product.salePrice * i.quantity,
-      })),
+      items: buildSaleItems(),
       payments: [],
       subtotalUsd: subtotal,
       taxAmount,
@@ -193,17 +220,22 @@ export default function POS() {
   const addPayment = () => {
     const amt = parseFloat(payAmount);
     if (!amt || amt <= 0) return;
-    const curr = currencies.find(c => c.id === (payMethod.includes('bs') ? 'ves' : 'usd'));
-    const rate = curr?.rate || 1;
+    const method = allPaymentMethods.find(m => m.id === payMethodId);
+    if (!method) return;
+    const rate = method.currency.rate;
     const entry: PaymentEntry = {
       id: crypto.randomUUID(),
-      method: payMethod as PaymentEntry['method'],
+      method: payMethodId,
       amount: amt,
-      currencyCode: curr?.code || 'USD',
+      currencyCode: method.currency.code,
       amountUsd: convertToUsd(amt, rate),
     };
     setPayments(prev => [...prev, entry]);
     setPayAmount('');
+  };
+
+  const removePayment = (id: string) => {
+    setPayments(prev => prev.filter(p => p.id !== id));
   };
 
   const completeSale = async () => {
@@ -213,14 +245,7 @@ export default function POS() {
       customerId: customer.id,
       customerName: customer.name,
       customerCedula: customer.cedula,
-      items: cart.map(i => ({
-        productId: i.product.id,
-        productName: i.product.name,
-        barcode: i.product.barcode,
-        quantity: i.quantity,
-        priceUsd: i.product.salePrice,
-        totalUsd: i.product.salePrice * i.quantity,
-      })),
+      items: buildSaleItems(),
       payments,
       subtotalUsd: subtotal,
       taxAmount,
@@ -231,7 +256,6 @@ export default function POS() {
     };
     await salesDB.put(sale);
 
-    // Update stock
     for (const item of cart) {
       const p = await productsDB.get(item.product.id);
       if (p) {
@@ -240,10 +264,8 @@ export default function POS() {
       }
     }
 
-    // Print receipt
     printReceipt(sale, currencies, settings);
 
-    // Reset
     setCart([]);
     setCustomer(null);
     setCedulaInput('');
@@ -253,12 +275,17 @@ export default function POS() {
   };
 
   const changeCurrObj = currencies.find(c => c.id === changeCurrency);
+  const totalDisplayCurrObj = currencies.find(c => c.id === totalDisplayCurrency) || displayCurrency;
+
+  const getMethodName = (methodId: string) => {
+    const m = allPaymentMethods.find(pm => pm.id === methodId);
+    return m ? `${m.name} (${m.currency.code})` : methodId;
+  };
 
   return (
     <div className="flex h-screen">
       {/* Left: Products */}
       <div className="flex-1 flex flex-col p-4 overflow-hidden">
-        {/* Scanner Bar */}
         <div className="flex gap-2 mb-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
@@ -282,36 +309,17 @@ export default function POS() {
           </Button>
         </div>
 
-        {/* Category Filter */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-          <Button
-            variant={selectedCategory === 'all' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setSelectedCategory('all')}
-          >
-            Todos
-          </Button>
+          <Button variant={selectedCategory === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setSelectedCategory('all')}>Todos</Button>
           {categories.map(cat => (
-            <Button
-              key={cat.id}
-              variant={selectedCategory === cat.id ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setSelectedCategory(cat.id)}
-            >
-              {cat.name}
-            </Button>
+            <Button key={cat.id} variant={selectedCategory === cat.id ? 'default' : 'outline'} size="sm" onClick={() => setSelectedCategory(cat.id)}>{cat.name}</Button>
           ))}
         </div>
 
-        {/* Product Grid */}
         <div className="flex-1 overflow-y-auto">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {filteredProducts.map(p => (
-              <button
-                key={p.id}
-                onClick={() => priceCheckMode ? setPriceCheckProduct(p) : addToCart(p)}
-                className="pos-card p-4 text-left animate-fade-in"
-              >
+              <button key={p.id} onClick={() => priceCheckMode ? setPriceCheckProduct(p) : addToCart(p)} className="pos-card p-4 text-left animate-fade-in">
                 <p className="font-medium text-sm text-card-foreground truncate">{p.name}</p>
                 <p className="text-primary font-bold mt-1">{formatPrice(p.salePrice)}</p>
                 <div className="flex items-center justify-between mt-2">
@@ -331,7 +339,6 @@ export default function POS() {
 
       {/* Right: Cart */}
       <div className="w-96 border-l border-border bg-card flex flex-col">
-        {/* Customer */}
         <div className="p-4 border-b border-border">
           {customer ? (
             <div className="flex items-center justify-between">
@@ -339,77 +346,68 @@ export default function POS() {
                 <p className="font-semibold text-sm">{customer.name}</p>
                 <p className="text-xs text-muted-foreground">C.I. {customer.cedula} • {customer.phone}</p>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => { setCustomer(null); setCedulaInput(''); }}>
-                <X size={16} />
-              </Button>
+              <Button variant="ghost" size="sm" onClick={() => { setCustomer(null); setCedulaInput(''); }}><X size={16} /></Button>
             </div>
           ) : (
             <div>
               <Label className="text-xs text-muted-foreground">Cédula del cliente</Label>
-              <Input
-                ref={cedulaRef}
-                value={cedulaInput}
-                onChange={e => setCedulaInput(e.target.value)}
-                onKeyDown={handleCedulaSearch}
-                placeholder="V-12345678 + Enter"
-                className="mt-1"
-              />
+              <Input value={cedulaInput} onChange={e => setCedulaInput(e.target.value)} onKeyDown={handleCedulaSearch} placeholder="V-12345678 + Enter" className="mt-1" />
             </div>
           )}
         </div>
 
-        {/* Parked Sales */}
         {parkedSales.length > 0 && (
           <button onClick={() => setShowParked(true)} className="px-4 py-2 border-b border-border bg-warning/10 text-xs font-medium text-warning flex items-center gap-2">
-            <Pause size={14} />
-            {parkedSales.length} venta(s) en espera
+            <Pause size={14} />{parkedSales.length} venta(s) en espera
           </button>
         )}
 
-        {/* Cart Items */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {cart.length === 0 ? (
             <div className="text-center text-muted-foreground text-sm py-10">
-              <ShoppingCart size={40} className="mx-auto mb-2 opacity-30" />
-              Carrito vacío
+              <ShoppingCart size={40} className="mx-auto mb-2 opacity-30" />Carrito vacío
             </div>
           ) : (
-            cart.map(item => (
-              <div key={item.product.id} className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{item.product.name}</p>
-                  <p className="text-xs text-muted-foreground">{formatPrice(item.product.salePrice)} c/u</p>
+            cart.map(item => {
+              const { rate } = getItemTax(item);
+              return (
+                <div key={item.product.id} className="flex items-center gap-3 p-3 rounded-lg bg-secondary/50">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{item.product.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatPrice(item.product.salePrice)} c/u
+                      {item.product.hasCustomTax && <span className="ml-1 text-primary">({item.product.customTaxName} {rate}%)</span>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(item.product.id, -1)}><Minus size={12} /></Button>
+                    <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
+                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(item.product.id, 1)}><Plus size={12} /></Button>
+                  </div>
+                  <p className="text-sm font-semibold w-20 text-right">{formatPrice(item.product.salePrice * item.quantity)}</p>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeFromCart(item.product.id)}><Trash2 size={14} /></Button>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(item.product.id, -1)}>
-                    <Minus size={12} />
-                  </Button>
-                  <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
-                  <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(item.product.id, 1)}>
-                    <Plus size={12} />
-                  </Button>
-                </div>
-                <p className="text-sm font-semibold w-20 text-right">{formatPrice(item.product.salePrice * item.quantity)}</p>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeFromCart(item.product.id)}>
-                  <Trash2 size={14} />
-                </Button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
-        {/* Totals & Actions */}
         <div className="p-4 border-t border-border space-y-3">
           <div className="space-y-1 text-sm">
             <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{formatPrice(subtotal)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">{settings.taxName || 'IVA'} ({taxRate}%)</span><span>{formatPrice(taxAmount)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Impuestos</span><span>{formatPrice(taxAmount)}</span></div>
             <div className="flex justify-between text-lg font-bold"><span>Total</span><span className="text-primary">{formatPrice(total)}</span></div>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1 gap-2" onClick={parkSale} disabled={cart.length === 0 || !customer}>
               <Pause size={16} /> Aparcar
             </Button>
-            <Button className="flex-1 gap-2" onClick={() => { setPayments([]); setShowPayment(true); }} disabled={cart.length === 0 || !customer}>
+            <Button className="flex-1 gap-2" onClick={() => {
+              setPayments([]);
+              setTotalDisplayCurrency(displayCurrency?.id || '');
+              if (allPaymentMethods.length > 0) setPayMethodId(allPaymentMethods[0].id);
+              setShowPayment(true);
+            }} disabled={cart.length === 0 || !customer}>
               <DollarSign size={16} /> Cobrar
             </Button>
           </div>
@@ -425,7 +423,12 @@ export default function POS() {
               <p className="text-lg font-semibold">{priceCheckProduct.name}</p>
               <p className="text-xs text-muted-foreground mb-4">Código: {priceCheckProduct.barcode}</p>
               <p className="text-4xl font-bold text-primary">{formatPrice(priceCheckProduct.salePrice)}</p>
-              <p className="text-sm text-muted-foreground mt-2">Stock: {priceCheckProduct.stock} unidades</p>
+              <div className="flex gap-2 justify-center mt-3">
+                {currencies.filter(c => c.id !== displayCurrency?.id).map(c => (
+                  <span key={c.id} className="text-sm text-muted-foreground">{formatCurrency(priceCheckProduct.salePrice, c)}</span>
+                ))}
+              </div>
+              <p className="text-sm text-muted-foreground mt-2">Stock: {priceCheckProduct.stock}</p>
             </div>
           )}
         </DialogContent>
@@ -442,9 +445,7 @@ export default function POS() {
                   <p className="text-sm font-medium">{sale.customerName}</p>
                   <p className="text-xs text-muted-foreground">{sale.items.length} items • {formatPrice(sale.totalUsd)}</p>
                 </div>
-                <Button size="sm" onClick={() => resumeSale(sale)} className="gap-1">
-                  <Play size={14} /> Retomar
-                </Button>
+                <Button size="sm" onClick={() => resumeSale(sale)} className="gap-1"><Play size={14} /> Retomar</Button>
               </div>
             ))}
           </div>
@@ -457,14 +458,8 @@ export default function POS() {
           <DialogHeader><DialogTitle>Nuevo Cliente</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">Cédula: <strong>{cedulaInput}</strong></p>
-            <div>
-              <Label>Nombre</Label>
-              <Input value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} placeholder="Nombre completo" />
-            </div>
-            <div>
-              <Label>Teléfono</Label>
-              <Input value={newCustomerPhone} onChange={e => setNewCustomerPhone(e.target.value)} placeholder="0412-1234567" />
-            </div>
+            <div><Label>Nombre</Label><Input value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} placeholder="Nombre completo" /></div>
+            <div><Label>Teléfono</Label><Input value={newCustomerPhone} onChange={e => setNewCustomerPhone(e.target.value)} placeholder="0412-1234567" /></div>
             <Button onClick={createCustomer} disabled={!newCustomerName} className="w-full">Registrar Cliente</Button>
           </div>
         </DialogContent>
@@ -475,18 +470,32 @@ export default function POS() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Procesar Pago</DialogTitle></DialogHeader>
           <div className="space-y-4">
+            {/* Total with currency switcher */}
             <div className="text-center py-2">
-              <p className="text-3xl font-bold text-primary">{formatPrice(total)}</p>
-              <p className="text-sm text-muted-foreground">Total a cobrar</p>
+              <p className="text-3xl font-bold text-primary">
+                {totalDisplayCurrObj ? formatCurrency(total, totalDisplayCurrObj) : formatPrice(total)}
+              </p>
+              <p className="text-sm text-muted-foreground mb-2">Total a cobrar</p>
+              <div className="flex gap-1 justify-center">
+                {currencies.map(c => (
+                  <Button key={c.id} size="sm" variant={totalDisplayCurrency === c.id ? 'default' : 'outline'}
+                    onClick={() => setTotalDisplayCurrency(c.id)} className="text-xs h-7 px-2">
+                    {c.code}
+                  </Button>
+                ))}
+              </div>
             </div>
 
             {/* Payments List */}
             {payments.length > 0 && (
               <div className="space-y-1">
                 {payments.map(p => (
-                  <div key={p.id} className="flex justify-between text-sm p-2 bg-secondary/50 rounded">
-                    <span>{getMethodLabel(p.method)}</span>
-                    <span>{p.currencyCode} {p.amount.toFixed(2)}</span>
+                  <div key={p.id} className="flex items-center justify-between text-sm p-2 bg-secondary/50 rounded">
+                    <span>{getMethodName(p.method)}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{p.currencyCode} {p.amount.toFixed(2)}</span>
+                      <button onClick={() => removePayment(p.id)} className="text-destructive hover:text-destructive/80"><X size={14} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -494,7 +503,9 @@ export default function POS() {
 
             {remainingUsd > 0.01 && (
               <div className="p-3 bg-warning/10 rounded-lg text-center">
-                <p className="text-sm font-medium">Restante: {formatPrice(remainingUsd)}</p>
+                <p className="text-sm font-medium">
+                  Restante: {totalDisplayCurrObj ? formatCurrency(remainingUsd, totalDisplayCurrObj) : formatPrice(remainingUsd)}
+                </p>
               </div>
             )}
 
@@ -510,20 +521,26 @@ export default function POS() {
                     </Button>
                   ))}
                 </div>
+                {/* Show change in all currencies */}
+                <div className="flex flex-wrap gap-2 justify-center mt-2 text-xs text-muted-foreground">
+                  {currencies.filter(c => c.id !== changeCurrency).map(c => (
+                    <span key={c.id}>{formatCurrency(changeUsd, c)}</span>
+                  ))}
+                </div>
               </div>
             )}
 
             {/* Add Payment */}
             {remainingUsd > 0.01 && (
               <div className="flex gap-2">
-                <Select value={payMethod} onValueChange={setPayMethod}>
-                  <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <Select value={payMethodId} onValueChange={setPayMethodId}>
+                  <SelectTrigger className="w-48"><SelectValue placeholder="Método..." /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cash_usd">Efectivo $</SelectItem>
-                    <SelectItem value="cash_bs">Efectivo Bs</SelectItem>
-                    <SelectItem value="card">Tarjeta</SelectItem>
-                    <SelectItem value="mobile_payment">Pago Móvil</SelectItem>
-                    <SelectItem value="transfer">Transferencia</SelectItem>
+                    {currencies.map(c => (
+                      (c.paymentMethods || []).map(m => (
+                        <SelectItem key={m.id} value={m.id}>{m.name} ({c.code})</SelectItem>
+                      ))
+                    ))}
                   </SelectContent>
                 </Select>
                 <Input

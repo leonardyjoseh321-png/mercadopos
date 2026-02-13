@@ -86,7 +86,8 @@ export default function CashRegisterPage() {
   const reportTotalsByMethod = (sales: Sale[]) => {
     const totals: Record<string, number> = {};
     sales.forEach(s => s.payments.forEach(p => {
-      const key = `${getMethodLabel(p.method)} (${p.currencyCode})`;
+      const methodName = getMethodLabel(p.method, currencies);
+      const key = `${methodName}`;
       totals[key] = (totals[key] || 0) + p.amount;
     }));
     return totals;
