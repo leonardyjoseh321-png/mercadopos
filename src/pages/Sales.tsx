@@ -9,8 +9,10 @@ import { formatCurrency, getMethodLabel } from '@/lib/currency';
 import { RotateCcw, Eye, Search } from 'lucide-react';
 import type { Sale, Currency } from '@/types';
 
+
 export default function Sales() {
   const [sales, setSales] = useState<Sale[]>([]);
+  const [currencies, setCurrenciesAll] = useState<Currency[]>([]);
   const [displayCurrency, setDisplayCurrency] = useState<Currency | null>(null);
   const [viewSale, setViewSale] = useState<Sale | null>(null);
   const [search, setSearch] = useState('');
@@ -19,6 +21,7 @@ export default function Sales() {
     (async () => {
       const [s, c] = await Promise.all([salesDB.getAll(), currenciesDB.getAll()]);
       setSales(s.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      setCurrenciesAll(c);
       setDisplayCurrency(c.find(x => x.isBase) || c[0] || null);
     })();
   }, []);
@@ -137,7 +140,7 @@ export default function Sales() {
                   <h3 className="font-semibold text-sm mb-2">Pagos</h3>
                   {viewSale.payments.map((p, i) => (
                     <div key={i} className="flex justify-between text-sm p-2 bg-primary/5 rounded mb-1">
-                      <span>{getMethodLabel(p.method)}</span>
+                      <span>{getMethodLabel(p.method, currencies)}</span>
                       <span>{p.currencyCode} {p.amount.toFixed(2)}</span>
                     </div>
                   ))}

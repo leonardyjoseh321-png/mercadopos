@@ -17,7 +17,15 @@ export function convertFromUsd(amountUsd: number, rate: number): number {
   return amountUsd * rate;
 }
 
-export function getMethodLabel(method: string): string {
+export function getMethodLabel(method: string, currencies?: Currency[]): string {
+  // Try to find from dynamic payment methods
+  if (currencies) {
+    for (const c of currencies) {
+      const found = (c.paymentMethods || []).find(m => m.id === method);
+      if (found) return `${found.name} (${c.code})`;
+    }
+  }
+  // Fallback for legacy data
   const labels: Record<string, string> = {
     cash_usd: 'Efectivo USD',
     cash_bs: 'Efectivo Bs',

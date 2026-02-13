@@ -1,3 +1,5 @@
+export type UnitType = 'unidad' | 'kilo' | 'litro' | 'caja' | 'metro' | 'gramo' | 'libra';
+
 export interface Product {
   id: string;
   name: string;
@@ -7,6 +9,12 @@ export interface Product {
   stock: number;
   categoryId: string;
   minStock: number;
+  unit: UnitType;
+  unitsPerPackage?: number;
+  packageName?: string;
+  hasCustomTax: boolean;
+  customTaxRate?: number;
+  customTaxName?: string;
   createdAt: string;
 }
 
@@ -28,9 +36,15 @@ export interface CartItem {
   quantity: number;
 }
 
+export interface PaymentMethod {
+  id: string;
+  name: string;
+  currencyId: string;
+}
+
 export interface PaymentEntry {
   id: string;
-  method: 'cash_usd' | 'cash_bs' | 'card' | 'mobile_payment' | 'transfer';
+  method: string;
   amount: number;
   currencyCode: string;
   amountUsd: number;
@@ -59,6 +73,9 @@ export interface SaleItem {
   quantity: number;
   priceUsd: number;
   totalUsd: number;
+  taxRate: number;
+  taxAmount: number;
+  unit: UnitType;
 }
 
 export interface Currency {
@@ -68,6 +85,7 @@ export interface Currency {
   symbol: string;
   rate: number;
   isBase: boolean;
+  paymentMethods: PaymentMethod[];
 }
 
 export interface CashRegister {
@@ -88,6 +106,27 @@ export interface CashOutflow {
   createdAt: string;
 }
 
+export type AdjustmentReason =
+  | 'damaged'
+  | 'expired'
+  | 'lost'
+  | 'stolen'
+  | 'donation'
+  | 'return_supplier'
+  | 'input_error'
+  | 'other';
+
+export const ADJUSTMENT_REASONS: Record<AdjustmentReason, string> = {
+  damaged: 'Producto dañado',
+  expired: 'Producto vencido',
+  lost: 'Pérdida / Extravío',
+  stolen: 'Robo',
+  donation: 'Donación',
+  return_supplier: 'Devolución a proveedor',
+  input_error: 'Error de carga',
+  other: 'Otro',
+};
+
 export interface StockAudit {
   id: string;
   productId: string;
@@ -95,6 +134,19 @@ export interface StockAudit {
   systemQty: number;
   actualQty: number;
   difference: number;
+  reason: AdjustmentReason;
+  explanation: string;
+  createdAt: string;
+}
+
+export interface StockAdjustment {
+  id: string;
+  productId: string;
+  productName: string;
+  previousStock: number;
+  newStock: number;
+  difference: number;
+  reason: AdjustmentReason;
   explanation: string;
   createdAt: string;
 }

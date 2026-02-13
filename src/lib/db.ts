@@ -1,36 +1,43 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Product, Category, Customer, Sale, Currency, CashRegister, CashOutflow, StockAudit, SettingEntry } from '@/types';
+import type { Product, Category, Customer, Sale, Currency, CashRegister, CashOutflow, StockAudit, StockAdjustment, SettingEntry } from '@/types';
 
 const DB_NAME = 'pos-system';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbInstance: IDBPDatabase | null = null;
 
 async function getDB(): Promise<IDBPDatabase> {
   if (dbInstance) return dbInstance;
   dbInstance = await openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      const products = db.createObjectStore('products', { keyPath: 'id' });
-      products.createIndex('by-barcode', 'barcode');
-      products.createIndex('by-category', 'categoryId');
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        const products = db.createObjectStore('products', { keyPath: 'id' });
+        products.createIndex('by-barcode', 'barcode');
+        products.createIndex('by-category', 'categoryId');
 
-      db.createObjectStore('categories', { keyPath: 'id' });
+        db.createObjectStore('categories', { keyPath: 'id' });
 
-      const customers = db.createObjectStore('customers', { keyPath: 'id' });
-      customers.createIndex('by-cedula', 'cedula');
+        const customers = db.createObjectStore('customers', { keyPath: 'id' });
+        customers.createIndex('by-cedula', 'cedula');
 
-      const sales = db.createObjectStore('sales', { keyPath: 'id' });
-      sales.createIndex('by-status', 'status');
-      sales.createIndex('by-date', 'createdAt');
+        const sales = db.createObjectStore('sales', { keyPath: 'id' });
+        sales.createIndex('by-status', 'status');
+        sales.createIndex('by-date', 'createdAt');
 
-      db.createObjectStore('currencies', { keyPath: 'id' });
-      db.createObjectStore('settings', { keyPath: 'key' });
-      db.createObjectStore('cashRegisters', { keyPath: 'id' });
+        db.createObjectStore('currencies', { keyPath: 'id' });
+        db.createObjectStore('settings', { keyPath: 'key' });
+        db.createObjectStore('cashRegisters', { keyPath: 'id' });
 
-      const outflows = db.createObjectStore('cashOutflows', { keyPath: 'id' });
-      outflows.createIndex('by-register', 'cashRegisterId');
+        const outflows = db.createObjectStore('cashOutflows', { keyPath: 'id' });
+        outflows.createIndex('by-register', 'cashRegisterId');
 
-      db.createObjectStore('stockAudits', { keyPath: 'id' });
+        db.createObjectStore('stockAudits', { keyPath: 'id' });
+      }
+      if (oldVersion < 2) {
+        if (!db.objectStoreNames.contains('stockAdjustments')) {
+          db.createObjectStore('stockAdjustments', { keyPath: 'id' });
+        }
+      }
     },
   });
   return dbInstance;
@@ -75,6 +82,7 @@ export const currenciesDB = {
   async getAll(): Promise<Currency[]> { return (await getDB()).getAll('currencies'); },
   async get(id: string): Promise<Currency | undefined> { return (await getDB()).get('currencies', id); },
   async put(c: Currency) { return (await getDB()).put('currencies', c); },
+  async delete(id: string) { return (await getDB()).delete('currencies', id); },
 };
 
 // Settings
@@ -104,12 +112,54 @@ export const stockAuditsDB = {
   async put(a: StockAudit) { return (await getDB()).put('stockAudits', a); },
 };
 
+// Stock Adjustments
+export const stockAdjustmentsDB = {
+  async getAll(): Promise<StockAdjustment[]> { return (await getDB()).getAll('stockAdjustments'); },
+  async put(a: StockAdjustment) { return (await getDB()).put('stockAdjustments', a); },
+};
+
 // Initialize DB with defaults
 export async function initializeDB() {
   const currencies = await currenciesDB.getAll();
   if (currencies.length === 0) {
-    await currenciesDB.put({ id: 'usd', code: 'USD', name: 'Dólar', symbol: '$', rate: 1, isBase: false });
-    await currenciesDB.put({ id: 'ves', code: 'VES', name: 'Bolívar', symbol: 'Bs', rate: 50, isBase: true });
+    await currenciesDB.put({
+      id: 'usd', code: 'USD', name: 'Dólar', symbol: '$', rate: 1, isBase: false,
+      paymentMethods: [
+        { id: 'cash_usd', name: 'Efectivo USD', currencyId: 'usd' },
+        { id: 'transfer_usd', name: 'Transferencia USD', currencyId: 'usd' },
+      ],
+    });
+    await currenciesDB.put({
+      id: 'ves', code: 'VES', name: 'Bolívar', symbol: 'Bs', rate: 50, isBase: true,
+      paymentMethods: [
+        { id: 'cash_bs', name: 'Efectivo Bs', currencyId: 'ves' },
+        { id: 'card_bs', name: 'Tarjeta (Bs)', currencyId: 'ves' },
+        { id: 'pago_movil', name: 'Pago Móvil', currencyId: 'ves' },
+      ],
+    });
+  } else {
+    // Migrate old currencies without paymentMethods
+    for (const c of currencies) {
+      if (!c.paymentMethods) {
+        if (c.code === 'USD') {
+          c.paymentMethods = [
+            { id: 'cash_usd', name: 'Efectivo USD', currencyId: c.id },
+            { id: 'transfer_usd', name: 'Transferencia USD', currencyId: c.id },
+          ];
+        } else if (c.code === 'VES') {
+          c.paymentMethods = [
+            { id: 'cash_bs', name: 'Efectivo Bs', currencyId: c.id },
+            { id: 'card_bs', name: 'Tarjeta (Bs)', currencyId: c.id },
+            { id: 'pago_movil', name: 'Pago Móvil', currencyId: c.id },
+          ];
+        } else {
+          c.paymentMethods = [
+            { id: `cash_${c.code.toLowerCase()}`, name: `Efectivo ${c.code}`, currencyId: c.id },
+          ];
+        }
+        await currenciesDB.put(c);
+      }
+    }
   }
 
   const settings = await settingsDB.getAll();
@@ -142,6 +192,7 @@ export async function exportDatabase(): Promise<string> {
     cashRegisters: await cashRegistersDB.getAll(),
     cashOutflows: await cashOutflowsDB.getAll(),
     stockAudits: await stockAuditsDB.getAll(),
+    stockAdjustments: await stockAdjustmentsDB.getAll(),
     exportDate: new Date().toISOString(),
   };
   return JSON.stringify(data, null, 2);
@@ -151,9 +202,9 @@ export async function exportDatabase(): Promise<string> {
 export async function importDatabase(json: string) {
   const data = JSON.parse(json);
   const db = await getDB();
-  const stores = ['products', 'categories', 'customers', 'sales', 'currencies', 'settings', 'cashRegisters', 'cashOutflows', 'stockAudits'] as const;
+  const stores = ['products', 'categories', 'customers', 'sales', 'currencies', 'settings', 'cashRegisters', 'cashOutflows', 'stockAudits', 'stockAdjustments'] as const;
   for (const store of stores) {
-    if (data[store]) {
+    if (data[store] && db.objectStoreNames.contains(store)) {
       const tx = db.transaction(store, 'readwrite');
       await tx.store.clear();
       for (const item of data[store]) {
