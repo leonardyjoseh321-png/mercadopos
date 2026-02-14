@@ -1,5 +1,50 @@
 export type UnitType = 'unidad' | 'kilo' | 'litro' | 'caja' | 'metro' | 'gramo' | 'libra';
 
+export type EmployeePermission =
+  | 'pos'
+  | 'products'
+  | 'customers'
+  | 'sales'
+  | 'cash_register'
+  | 'reports'
+  | 'settings'
+  | 'employees';
+
+export const PERMISSION_LABELS: Record<EmployeePermission, string> = {
+  pos: 'Punto de Venta',
+  products: 'Inventario',
+  customers: 'Clientes',
+  sales: 'Ventas',
+  cash_register: 'Caja',
+  reports: 'Reportes',
+  settings: 'Configuración',
+  employees: 'Empleados',
+};
+
+export type EmployeeRole = 'admin' | 'cajero' | 'supervisor';
+
+export const ROLE_LABELS: Record<EmployeeRole, string> = {
+  admin: 'Administrador',
+  cajero: 'Cajero',
+  supervisor: 'Supervisor',
+};
+
+export const ROLE_DEFAULT_PERMISSIONS: Record<EmployeeRole, EmployeePermission[]> = {
+  admin: ['pos', 'products', 'customers', 'sales', 'cash_register', 'reports', 'settings', 'employees'],
+  supervisor: ['pos', 'products', 'customers', 'sales', 'cash_register', 'reports'],
+  cajero: ['pos', 'customers', 'sales', 'cash_register'],
+};
+
+export interface Employee {
+  id: string;
+  email: string;
+  name: string;
+  role: EmployeeRole;
+  permissions: EmployeePermission[];
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -55,6 +100,8 @@ export interface Sale {
   customerId: string;
   customerName: string;
   customerCedula: string;
+  employeeId?: string;
+  employeeName?: string;
   items: SaleItem[];
   payments: PaymentEntry[];
   totalUsd: number;
@@ -95,6 +142,8 @@ export interface CashRegister {
   openingAmounts: Record<string, number>;
   status: 'open' | 'closed';
   type?: 'X' | 'Z';
+  employeeId?: string;
+  employeeName?: string;
 }
 
 export interface CashOutflow {
@@ -103,6 +152,8 @@ export interface CashOutflow {
   currencyCode: string;
   reason: string;
   cashRegisterId: string;
+  employeeId?: string;
+  employeeName?: string;
   createdAt: string;
 }
 
@@ -136,6 +187,8 @@ export interface StockAudit {
   difference: number;
   reason: AdjustmentReason;
   explanation: string;
+  employeeId?: string;
+  employeeName?: string;
   createdAt: string;
 }
 
@@ -148,6 +201,8 @@ export interface StockAdjustment {
   difference: number;
   reason: AdjustmentReason;
   explanation: string;
+  employeeId?: string;
+  employeeName?: string;
   createdAt: string;
 }
 

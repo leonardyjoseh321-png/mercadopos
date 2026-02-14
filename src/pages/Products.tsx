@@ -11,6 +11,8 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, Pencil, Trash2, Tag, TrendingUp, TrendingDown, ClipboardCheck, Search, AlertTriangle, Filter, PackageMinus } from 'lucide-react';
 import { productsDB, categoriesDB, currenciesDB, stockAuditsDB, stockAdjustmentsDB } from '@/lib/db';
 import { formatCurrency } from '@/lib/currency';
+import { usePagination } from '@/hooks/use-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 import type { Product, Category, Currency, StockAudit, StockAdjustment, UnitType, AdjustmentReason } from '@/types';
 import { ADJUSTMENT_REASONS } from '@/types';
 
@@ -99,6 +101,9 @@ export default function Products() {
     const matchLowStock = !filterLowStock || p.stock <= p.minStock;
     return matchSearch && matchCat && matchLowStock;
   });
+
+  const productsPagination = usePagination(filteredProducts, 20);
+  const auditPagination = usePagination(auditHistory, 20);
 
   const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
 
@@ -224,7 +229,7 @@ export default function Products() {
     loadData();
   };
 
-  // Stock Adjustment (damage, loss, etc.)
+  // Stock Adjustment
   const openAdjustment = (p: Product) => {
     setAdjustProduct(p);
     setAdjustQty('');
@@ -284,12 +289,12 @@ export default function Products() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
               <Input
                 value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
+                onChange={e => { setSearchTerm(e.target.value); productsPagination.resetPage(); }}
                 placeholder="Buscar por nombre o código..."
                 className="pl-9"
               />
             </div>
-            <Select value={filterCategory} onValueChange={setFilterCategory}>
+            <Select value={filterCategory} onValueChange={v => { setFilterCategory(v); productsPagination.resetPage(); }}>
               <SelectTrigger className="w-44">
                 <Filter size={14} className="mr-1" />
                 <SelectValue placeholder="Categoría" />
@@ -301,7 +306,7 @@ export default function Products() {
             </Select>
             <Button
               variant={filterLowStock ? 'default' : 'outline'}
-              onClick={() => setFilterLowStock(!filterLowStock)}
+              onClick={() => { setFilterLowStock(!filterLowStock); productsPagination.resetPage(); }}
               className="gap-2"
             >
               <AlertTriangle size={14} />
@@ -330,7 +335,7 @@ export default function Products() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredProducts.map(p => (
+                {productsPagination.paginatedItems.map(p => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium">
                       {p.name}
@@ -374,12 +379,14 @@ export default function Products() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {filteredProducts.length === 0 && (
+                {productsPagination.paginatedItems.length === 0 && (
                   <TableRow><TableCell colSpan={9} className="text-center py-10 text-muted-foreground">No hay productos</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
           </div>
+
+          <PaginationControls {...productsPagination} />
         </TabsContent>
 
         <TabsContent value="categories">
@@ -470,7 +477,7 @@ export default function Products() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {auditHistory.slice(0, 50).map(a => (
+                      {auditPagination.paginatedItems.map(a => (
                         <TableRow key={a.id}>
                           <TableCell className="text-xs">{new Date(a.createdAt).toLocaleString('es')}</TableCell>
                           <TableCell className="font-medium">{a.productName}</TableCell>
@@ -486,6 +493,7 @@ export default function Products() {
                     </TableBody>
                   </Table>
                 </div>
+                <PaginationControls {...auditPagination} />
               </div>
             )}
           </div>

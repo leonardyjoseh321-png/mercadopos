@@ -4,9 +4,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, Search } from 'lucide-react';
 import { customersDB, salesDB } from '@/lib/db';
+import { usePagination } from '@/hooks/use-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 import type { Customer, Sale } from '@/types';
 
 export default function Customers() {
@@ -29,8 +30,12 @@ export default function Customers() {
   };
 
   const filtered = customers.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) || c.cedula.includes(search)
+    c.name.toLowerCase().includes(search.toLowerCase()) ||
+    c.cedula.includes(search) ||
+    c.phone.includes(search)
   );
+
+  const pagination = usePagination(filtered, 20);
 
   const openForm = (c?: Customer) => {
     setEditing(c || null);
@@ -91,7 +96,7 @@ export default function Customers() {
 
       <div className="relative mb-4">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-        <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nombre o cédula..." className="pl-10" />
+        <Input value={search} onChange={e => { setSearch(e.target.value); pagination.resetPage(); }} placeholder="Buscar por nombre, cédula o teléfono..." className="pl-10" />
       </div>
 
       <div className="pos-card-flat overflow-hidden">
@@ -106,7 +111,7 @@ export default function Customers() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map(c => (
+            {pagination.paginatedItems.map(c => (
               <TableRow key={c.id}>
                 <TableCell className="font-medium">{c.name}</TableCell>
                 <TableCell>{c.cedula}</TableCell>
@@ -121,9 +126,14 @@ export default function Customers() {
                 </TableCell>
               </TableRow>
             ))}
+            {pagination.paginatedItems.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">No hay clientes</TableCell></TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
+
+      <PaginationControls {...pagination} />
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent>

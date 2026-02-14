@@ -13,7 +13,8 @@ import Products from '@/pages/Products';
 import Customers from '@/pages/Customers';
 import Sales from '@/pages/Sales';
 import CashRegister from '@/pages/CashRegister';
-import Dashboard from '@/pages/Dashboard';
+import Reports from '@/pages/Reports';
+import Employees from '@/pages/Employees';
 import Settings from '@/pages/Settings';
 import NotFound from '@/pages/NotFound';
 
@@ -48,8 +49,10 @@ function AppRoutes() {
         <Route path="/customers" element={<Customers />} />
         <Route path="/sales" element={<Sales />} />
         <Route path="/cash-register" element={<CashRegister />} />
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/employees" element={<Employees />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/dashboard" element={<Navigate to="/reports" replace />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

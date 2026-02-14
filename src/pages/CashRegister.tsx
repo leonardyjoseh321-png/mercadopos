@@ -3,11 +3,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { salesDB, cashRegistersDB, cashOutflowsDB, currenciesDB } from '@/lib/db';
 import { formatCurrency, getMethodLabel } from '@/lib/currency';
-import { DoorOpen, DoorClosed, FileText, MinusCircle } from 'lucide-react';
+import { DoorOpen, DoorClosed, FileText, MinusCircle, Search, Filter, Calendar } from 'lucide-react';
+import { usePagination } from '@/hooks/use-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 import type { CashRegister, Sale, CashOutflow, Currency } from '@/types';
 
 export default function CashRegisterPage() {
@@ -21,6 +24,12 @@ export default function CashRegisterPage() {
   const [outflowAmount, setOutflowAmount] = useState('');
   const [outflowCurrency, setOutflowCurrency] = useState('usd');
   const [outflowReason, setOutflowReason] = useState('');
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const displayCurrency = currencies.find(c => c.isBase) || currencies[0];
 
@@ -82,19 +91,30 @@ export default function CashRegisterPage() {
 
   const formatPrice = (usd: number) => displayCurrency ? formatCurrency(usd, displayCurrency) : `$ ${usd.toFixed(2)}`;
 
-  // Report calculations
   const reportTotalsByMethod = (sales: Sale[]) => {
     const totals: Record<string, number> = {};
     sales.forEach(s => s.payments.forEach(p => {
       const methodName = getMethodLabel(p.method, currencies);
-      const key = `${methodName}`;
-      totals[key] = (totals[key] || 0) + p.amount;
+      totals[methodName] = (totals[methodName] || 0) + p.amount;
     }));
     return totals;
   };
 
+  // Filtering registers
+  const filteredRegisters = registers.filter(r => {
+    const matchStatus = filterStatus === 'all' || r.status === filterStatus;
+    const matchDateFrom = !dateFrom || r.openDate.slice(0, 10) >= dateFrom;
+    const matchDateTo = !dateTo || r.openDate.slice(0, 10) <= dateTo;
+    const matchSearch = !search ||
+      (r.employeeName || '').toLowerCase().includes(search.toLowerCase()) ||
+      r.id.includes(search);
+    return matchStatus && matchDateFrom && matchDateTo && matchSearch;
+  });
+
+  const pagination = usePagination(filteredRegisters, 15);
+
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Caja Registradora</h1>
@@ -115,6 +135,31 @@ export default function CashRegisterPage() {
         </div>
       </div>
 
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+          <Input value={search} onChange={e => { setSearch(e.target.value); pagination.resetPage(); }} placeholder="Buscar por empleado o ID..." className="pl-10" />
+        </div>
+        <Select value={filterStatus} onValueChange={v => { setFilterStatus(v); pagination.resetPage(); }}>
+          <SelectTrigger className="w-36">
+            <Filter size={14} className="mr-1" />
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="open">Abierta</SelectItem>
+            <SelectItem value="closed">Cerrada</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1">
+          <Calendar size={14} className="text-muted-foreground" />
+          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); pagination.resetPage(); }} className="w-36 text-xs" />
+          <span className="text-xs text-muted-foreground">a</span>
+          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); pagination.resetPage(); }} className="w-36 text-xs" />
+        </div>
+      </div>
+
       {/* Registers History */}
       <div className="pos-card-flat overflow-hidden">
         <Table>
@@ -122,15 +167,17 @@ export default function CashRegisterPage() {
             <TableRow>
               <TableHead>Apertura</TableHead>
               <TableHead>Cierre</TableHead>
+              <TableHead>Empleado</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {registers.map(r => (
+            {pagination.paginatedItems.map(r => (
               <TableRow key={r.id}>
                 <TableCell className="text-sm">{new Date(r.openDate).toLocaleString('es')}</TableCell>
                 <TableCell className="text-sm">{r.closeDate ? new Date(r.closeDate).toLocaleString('es') : '—'}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{r.employeeName || '—'}</TableCell>
                 <TableCell>
                   <Badge variant={r.status === 'open' ? 'default' : 'secondary'}>
                     {r.status === 'open' ? 'Abierta' : 'Cerrada'}
@@ -141,9 +188,14 @@ export default function CashRegisterPage() {
                 </TableCell>
               </TableRow>
             ))}
+            {pagination.paginatedItems.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">No hay registros</TableCell></TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
+
+      <PaginationControls {...pagination} />
 
       {/* Open Register Dialog */}
       <Dialog open={showOpen} onOpenChange={setShowOpen}>
