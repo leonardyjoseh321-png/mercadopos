@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { salesDB, productsDB, currenciesDB } from '@/lib/db';
 import { formatCurrency, getMethodLabel } from '@/lib/currency';
-import { RotateCcw, Eye, Search } from 'lucide-react';
+import { RotateCcw, Eye, Search, Filter, Calendar } from 'lucide-react';
+import { usePagination } from '@/hooks/use-pagination';
+import { PaginationControls } from '@/components/PaginationControls';
 import type { Sale, Currency } from '@/types';
-
 
 export default function Sales() {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -16,6 +18,9 @@ export default function Sales() {
   const [displayCurrency, setDisplayCurrency] = useState<Currency | null>(null);
   const [viewSale, setViewSale] = useState<Sale | null>(null);
   const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -33,7 +38,6 @@ export default function Sales() {
     sale.status = 'voided';
     sale.updatedAt = new Date().toISOString();
     await salesDB.put(sale);
-    // Restore stock
     for (const item of sale.items) {
       const p = await productsDB.get(item.productId);
       if (p) {
@@ -51,17 +55,48 @@ export default function Sales() {
     voided: { label: 'Anulada', variant: 'destructive' },
   };
 
-  const filtered = sales.filter(s =>
-    !search || s.customerName.toLowerCase().includes(search.toLowerCase()) || s.customerCedula.includes(search) || s.id.includes(search)
-  );
+  const filtered = sales.filter(s => {
+    const matchSearch = !search ||
+      s.customerName.toLowerCase().includes(search.toLowerCase()) ||
+      s.customerCedula.includes(search) ||
+      s.id.includes(search) ||
+      (s.employeeName || '').toLowerCase().includes(search.toLowerCase());
+    const matchStatus = filterStatus === 'all' || s.status === filterStatus;
+    const matchDateFrom = !dateFrom || s.createdAt.slice(0, 10) >= dateFrom;
+    const matchDateTo = !dateTo || s.createdAt.slice(0, 10) <= dateTo;
+    return matchSearch && matchStatus && matchDateFrom && matchDateTo;
+  });
+
+  const pagination = usePagination(filtered, 20);
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-2xl font-bold mb-6">Historial de Ventas</h1>
 
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-        <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por cliente o ID..." className="pl-10" />
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
+          <Input value={search} onChange={e => { setSearch(e.target.value); pagination.resetPage(); }} placeholder="Buscar por cliente, cédula, empleado o ID..." className="pl-10" />
+        </div>
+        <Select value={filterStatus} onValueChange={v => { setFilterStatus(v); pagination.resetPage(); }}>
+          <SelectTrigger className="w-40">
+            <Filter size={14} className="mr-1" />
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="completed">Completada</SelectItem>
+            <SelectItem value="parked">En Espera</SelectItem>
+            <SelectItem value="pending">Pendiente</SelectItem>
+            <SelectItem value="voided">Anulada</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-1">
+          <Calendar size={14} className="text-muted-foreground" />
+          <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); pagination.resetPage(); }} className="w-36 text-xs" />
+          <span className="text-xs text-muted-foreground">a</span>
+          <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); pagination.resetPage(); }} className="w-36 text-xs" />
+        </div>
       </div>
 
       <div className="pos-card-flat overflow-hidden">
@@ -70,6 +105,7 @@ export default function Sales() {
             <TableRow>
               <TableHead>Fecha</TableHead>
               <TableHead>Cliente</TableHead>
+              <TableHead>Empleado</TableHead>
               <TableHead>Items</TableHead>
               <TableHead className="text-right">Total</TableHead>
               <TableHead>Estado</TableHead>
@@ -77,7 +113,7 @@ export default function Sales() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map(s => (
+            {pagination.paginatedItems.map(s => (
               <TableRow key={s.id}>
                 <TableCell className="text-sm">{new Date(s.createdAt).toLocaleString('es')}</TableCell>
                 <TableCell>
@@ -86,6 +122,7 @@ export default function Sales() {
                     <p className="text-xs text-muted-foreground">{s.customerCedula}</p>
                   </div>
                 </TableCell>
+                <TableCell className="text-sm text-muted-foreground">{s.employeeName || '—'}</TableCell>
                 <TableCell>{s.items.reduce((sum, i) => sum + i.quantity, 0)}</TableCell>
                 <TableCell className="text-right font-semibold">{formatPrice(s.totalUsd)}</TableCell>
                 <TableCell>
@@ -107,9 +144,14 @@ export default function Sales() {
                 </TableCell>
               </TableRow>
             ))}
+            {pagination.paginatedItems.length === 0 && (
+              <TableRow><TableCell colSpan={7} className="text-center py-10 text-muted-foreground">No hay ventas</TableCell></TableRow>
+            )}
           </TableBody>
         </Table>
       </div>
+
+      <PaginationControls {...pagination} />
 
       <Dialog open={!!viewSale} onOpenChange={() => setViewSale(null)}>
         <DialogContent className="max-w-lg">
@@ -120,6 +162,7 @@ export default function Sales() {
                 <p>ID: {viewSale.id.slice(0, 8).toUpperCase()}</p>
                 <p>Fecha: {new Date(viewSale.createdAt).toLocaleString('es')}</p>
                 <p>Cliente: {viewSale.customerName} ({viewSale.customerCedula})</p>
+                {viewSale.employeeName && <p>Empleado: {viewSale.employeeName}</p>}
               </div>
               <div>
                 <h3 className="font-semibold text-sm mb-2">Productos</h3>

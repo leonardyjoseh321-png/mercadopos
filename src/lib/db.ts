@@ -1,8 +1,8 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Product, Category, Customer, Sale, Currency, CashRegister, CashOutflow, StockAudit, StockAdjustment, SettingEntry } from '@/types';
+import type { Product, Category, Customer, Sale, Currency, CashRegister, CashOutflow, StockAudit, StockAdjustment, SettingEntry, Employee } from '@/types';
 
 const DB_NAME = 'pos-system';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbInstance: IDBPDatabase | null = null;
 
@@ -36,6 +36,12 @@ async function getDB(): Promise<IDBPDatabase> {
       if (oldVersion < 2) {
         if (!db.objectStoreNames.contains('stockAdjustments')) {
           db.createObjectStore('stockAdjustments', { keyPath: 'id' });
+        }
+      }
+      if (oldVersion < 3) {
+        if (!db.objectStoreNames.contains('employees')) {
+          const employees = db.createObjectStore('employees', { keyPath: 'id' });
+          employees.createIndex('by-email', 'email');
         }
       }
     },
@@ -118,6 +124,15 @@ export const stockAdjustmentsDB = {
   async put(a: StockAdjustment) { return (await getDB()).put('stockAdjustments', a); },
 };
 
+// Employees
+export const employeesDB = {
+  async getAll(): Promise<Employee[]> { return (await getDB()).getAll('employees'); },
+  async get(id: string): Promise<Employee | undefined> { return (await getDB()).get('employees', id); },
+  async getByEmail(email: string): Promise<Employee | undefined> { return (await getDB()).getFromIndex('employees', 'by-email', email); },
+  async put(e: Employee) { return (await getDB()).put('employees', e); },
+  async delete(id: string) { return (await getDB()).delete('employees', id); },
+};
+
 // Initialize DB with defaults
 export async function initializeDB() {
   const currencies = await currenciesDB.getAll();
@@ -138,7 +153,6 @@ export async function initializeDB() {
       ],
     });
   } else {
-    // Migrate old currencies without paymentMethods
     for (const c of currencies) {
       if (!c.paymentMethods) {
         if (c.code === 'USD') {
@@ -193,6 +207,7 @@ export async function exportDatabase(): Promise<string> {
     cashOutflows: await cashOutflowsDB.getAll(),
     stockAudits: await stockAuditsDB.getAll(),
     stockAdjustments: await stockAdjustmentsDB.getAll(),
+    employees: await employeesDB.getAll(),
     exportDate: new Date().toISOString(),
   };
   return JSON.stringify(data, null, 2);
@@ -202,7 +217,7 @@ export async function exportDatabase(): Promise<string> {
 export async function importDatabase(json: string) {
   const data = JSON.parse(json);
   const db = await getDB();
-  const stores = ['products', 'categories', 'customers', 'sales', 'currencies', 'settings', 'cashRegisters', 'cashOutflows', 'stockAudits', 'stockAdjustments'] as const;
+  const stores = ['products', 'categories', 'customers', 'sales', 'currencies', 'settings', 'cashRegisters', 'cashOutflows', 'stockAudits', 'stockAdjustments', 'employees'] as const;
   for (const store of stores) {
     if (data[store] && db.objectStoreNames.contains(store)) {
       const tx = db.transaction(store, 'readwrite');
